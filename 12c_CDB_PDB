@@ -1,3 +1,9 @@
+SQL>  select cdb from v$database;
+
+CDB
+---
+YES
+*********************************************************************************************************************************
 SQL> select instance_name, version, status, con_id from v$instance;
 
 INSTANCE_NAME    VERSION           STATUS           CON_ID
