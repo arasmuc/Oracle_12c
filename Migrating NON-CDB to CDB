@@ -1,0 +1,158 @@
+https://oracle-base.com/articles/12c/multitenant-migrate-non-cdb-to-pdb-12cr1
+http://docs.oracle.com/database/121/ADMIN/cdb_plug.htm
+
+1.) Listing DBs:
+
+db01:/oracle/product/12.1.0.2/db_1:N -> NON-CDB
+CDB:/oracle/product/12.1.0.2/db_1:N  -> CDB
+
+2.) CDB:
+
+select con_id, name, open_mode from v$pdbs;
+
+              CON_ID NAME                           OPEN_MODE
+-------------------- ------------------------------ ----------
+                   2 PDB$SEED                       READ ONLY
+                   3 PDB1                           READ WRITE
+                   5 PDB3                           READ WRITE
+
+3.) NON-CDB:
+
+select instance_name, con_id, status from v$instance;
+
+INSTANCE_NAME                  CON_ID STATUS
+---------------- -------------------- ------------
+db01                                0 OPEN
+
+select name from v$datafile;
+
+NAME
+----------------------------------------------------------------------------------
+/oracle/oradata/DB01/datafile/o1_mf_system_c885167z_.dbf
+/oracle/oradata/DB01/datafile/o1_mf_sysaux_c884zs08_.dbf
+/oracle/oradata/DB01/datafile/o1_mf_undotbs1_c8852oby_.dbf
+/oracle/oradata/DB01/datafile/o1_mf_users_c8852mj6_.dbf
+
+select * from v$logfile
+13:01:55 SQL> /
+
+              GROUP# STATUS  TYPE    MEMBER                                                                 IS_               CON_ID
+-------------------- ------- ------- ---------------------------------------------------------------------- --- --------------------
+                   3         ONLINE  /oracle/oradata/DB01/onlinelog/o1_mf_3_c8853lc8_.log                   NO                     0
+                   3         ONLINE  /oracle/fast_recovery_area/DB01/onlinelog/o1_mf_3_c8853ldk_.log        YES                    0
+                   2         ONLINE  /oracle/oradata/DB01/onlinelog/o1_mf_2_c8853ky9_.log                   NO                     0
+                   2         ONLINE  /oracle/fast_recovery_area/DB01/onlinelog/o1_mf_2_c8853l0j_.log        YES                    0
+                   1         ONLINE  /oracle/oradata/DB01/onlinelog/o1_mf_1_c8853kkh_.log                   NO                     0
+                   1         ONLINE  /oracle/fast_recovery_area/DB01/onlinelog/o1_mf_1_c8853km4_.log        YES                    0
+
+
+4.) Clear Shutdown on NON-CDB
+
+shut immediate;
+startup open read only;
+
+select open_mode from v$database;
+
+OPEN_MODE
+--------------------
+READ ONLY
+
+5.) DBMS_PDB - Describe
+
+BEGIN
+  DBMS_PDB.DESCRIBE(
+    pdb_descr_file => '/home/oracle/xml/db01.xml');
+END;
+/
+
+6.) Close NON-CDB
+
+shut immediate;
+
+7.) Creating PDB
+
+/oracle/oradata/CDB/pdb4
+
+CREATE PLUGGABLE DATABASE pdb4 USING '/home/oracle/xml/db01.xml'
+  COPY
+  FILE_NAME_CONVERT = ('/oracle/oradata/DB01/datafile/', '/oracle/oradata/CDB/pdb4/');
+
+  ERROR at line 1:
+ORA-01276: Cannot add file /oracle/oradata/CDB/pdb4/o1_mf_system_c885167z_.dbf.  File has an Oracle Managed Files file name.
+
+Note: Here we faced an error because my database is on OMF.
+--> Filename parameters for Create Pluggable Database with OMF and non-OMF (Doc ID 2095929.1)
+
+--> Here my favorite way. Because you can imagine if we need plug a big TERABYTE database. NOCOPY option is a good alternative.
+   
+CREATE PLUGGABLE DATABASE pdb4 USING '/home/oracle/xml/db01.xml'
+  NOCOPY
+  TEMPFILE REUSE;
+ 
+Pluggable database created. 
+
+select con_id, name, open_mode from v$pdbs;
+
+              CON_ID NAME                           OPEN_MODE
+-------------------- ------------------------------ ----------
+                   2 PDB$SEED                       READ ONLY
+                   3 PDB1                           READ WRITE
+                   4 PDB4                           MOUNTED
+                   5 PDB3                           READ WRITE
+
+8.) $ORACLE_HOME/rdbms/admin/noncdb_to_pdb.sql
+
+alter session set container=PDB4;
+@?/rdbms/admin/noncdb_to_pdb.sql
+
+13:21:30 SQL> -- leave the PDB in the same state it was when we started
+13:21:30 SQL> BEGIN
+13:21:30   2    execute immediate '&open_sql &restricted_state';
+13:21:30   3  EXCEPTION
+13:21:30   4    WHEN OTHERS THEN
+13:21:30   5    BEGIN
+13:21:30   6      IF (sqlcode <> -900) THEN
+13:21:30   7        RAISE;
+13:21:30   8      END IF;
+13:21:30   9    END;
+13:21:30  10  END;
+13:21:30  11  /
+
+PL/SQL procedure successfully completed.
+
+13:21:30 SQL>
+13:21:30 SQL>
+13:21:30 SQL> WHENEVER SQLERROR CONTINUE;
+
+ select con_id, name, open_mode from v$pdbs;
+
+    CON_ID NAME                           OPEN_MODE
+---------- ------------------------------ ----------
+         4 PDB4                           MOUNTED
+
+13:24:52 SQL> ALTER DATABASE OPEN;
+
+Database altered.
+
+13:29:26 SQL> select con_id, name, open_mode from v$pdbs;
+
+    CON_ID NAME                           OPEN_MODE
+---------- ------------------------------ ----------
+         4 PDB4                           READ WRITE
+
+1 row selected.
+
+SELECT TABLESPACE_NAME, FILE_NAME FROM DBA_DATA_FILES
+13:30:35 SQL> /
+
+TABLESPACE_NAME                FILE_NAME
+------------------------------ ----------------------------------------------------------------------
+USERS                          /oracle/oradata/DB01/datafile/o1_mf_users_c8852mj6_.dbf
+SYSAUX                         /oracle/oradata/DB01/datafile/o1_mf_sysaux_c884zs08_.dbf
+SYSTEM                         /oracle/oradata/DB01/datafile/o1_mf_system_c885167z_.dbf
+
+Note: We can delete UNDO because the UNDO tablespace now is from CDB.
+
+[root@lnx01 ~]# fuser /oracle/oradata/DB01/datafile/o1_mf_undotbs1_c8852oby_.dbf
+[root@lnx01 ~]# rm /oracle/oradata/DB01/datafile/o1_mf_undotbs1_c8852oby_.dbf
+rm: remove regular file `/oracle/oradata/DB01/datafile/o1_mf_undotbs1_c8852oby_.dbf'? y
