@@ -1,0 +1,40 @@
+set lines 200 pages 200
+select
+'nohup' ||
+' impdp \"/ as sysdba\" ' ||
+' parallel=4' ||
+' dumpfile=sat_dumpfiles:' ||substr(username,4,3)||substr(username,11)||'.%U.dmp' ||
+' logfile=sat_logfiles:' ||substr(username,4,3)||substr(username,11)||'.imp.log' ||
+' \' || CHR(10) ||
+' job_name=' ||username||
+--' parfile=parfiles/parfile.exp' ||
+' 1>/tmp/' ||username||'.out 2>&1' ||
+' &' export_sentence
+from dba_users
+where username like 'OWN%' 
+order by username;
+
+-----------------------------------------------
+
+set lines 200 pages 200
+select
+'nohup expdp \''/ as sysdba\''' ||
+' schemas=' ||username ||
+' parallel=4' ||
+' dumpfile=sat_dumpfiles:' ||substr(username,4,3)||substr(username,11)||'.%U.dmp' ||
+' logfile=sat_logfiles:' ||substr(username,4,3)||substr(username,11)||'.exp.log' ||
+' \' || CHR(10) ||
+' job_name=' ||substr(username,4,3)|| substr(username,11) ||
+' parfile=parfiles/parfile.exp' ||
+' 1>/tmp/' ||substr(username,4,3)||substr(username,11)||'.out 2>&1' ||
+' &' export_sentence
+from dba_users
+where username like 'OWN%';
+
+-----------------------------------------------
+
+cluster=no
+estimate=statistics
+metrics=yes
+filesize=5G
+exclude=statistics
